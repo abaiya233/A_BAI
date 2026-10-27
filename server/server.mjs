@@ -471,6 +471,12 @@ async function startDaFeiYu() {
       try { logStart = fs.statSync(logFile).size; } catch { /* 还没有日志，从 0 开始 */ }
 
       // 老的结构：内置 python 直接跑后端；新的 Electron 包：直接起 exe
+      // ASTRBOT_LAUNCHER=1 是 AstrBot 官方给「桌面启动器」准备的开关：
+      // 不设时插件页响应会带 X-Frame-Options: SAMEORIGIN + CSP frame-ancestors 'self'，
+      // 面板被嵌在 8788 页面里时，祖先链上有 8788 这个异源，浏览器就会
+      // ERR_BLOCKED_BY_RESPONSE 把插件页拦下来（点「天使之魂」显示一片空白/错误页）。
+      // 设上之后这两个头不再下发，插件页才能在工具箱内嵌窗口里正常显示。
+      const astrbotEnv = { ASTRBOT_ROOT: rootDir, ASTRBOT_LAUNCHER: '1' };
       const py = path.join(packDir, 'backend', 'python', 'python.exe');
       if (fs.existsSync(py)) {
         spawnDetached(
@@ -478,12 +484,12 @@ async function startDaFeiYu() {
           ['launch_backend.py', '--webui-dir', path.join(packDir, 'webui')],
           path.join(packDir, 'backend'),
           logFile,
-          { ASTRBOT_ROOT: rootDir }
+          astrbotEnv
         );
       } else {
         const exe = path.join(packDir, 'AstrBot.exe');
         if (!fs.existsSync(exe)) throw new Error('AstrBot 目录结构不认识，没找到可执行程序');
-        spawnDetached(exe, [], packDir, logFile, { ASTRBOT_ROOT: rootDir });
+        spawnDetached(exe, [], packDir, logFile, astrbotEnv);
       }
       if (!(await waitPort(FISH_PORTS.astrbot, 120000))) throw new Error('AstrBot 端口 6185 未就绪，看运行日志');
 
