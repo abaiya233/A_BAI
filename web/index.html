@@ -581,6 +581,20 @@
           <span>MCS 面板密码</span>
           <input id="inpPass" type="password" autocomplete="new-password" placeholder="留空表示不修改">
         </label>
+        <label class="field">
+          <span>SnowLuma 访问密码</span>
+          <input id="inpSnowPw" type="password" readonly autocomplete="off" placeholder="装好 SnowLuma 后自动生成">
+        </label>
+        <div class="set-row">
+          <div class="set-row-main">
+            <span class="set-row-title">打开 QQ 连接器面板会自动填入</span>
+            <span class="set-row-desc">你在 SnowLuma 面板里改过密码的话，这里会跟着更新，不用手动同步。</span>
+          </div>
+          <div class="row-btns">
+            <button class="btn btn-ghost btn-sm glowable" id="btnSnowPwEye">显示</button>
+            <button class="btn btn-ghost btn-sm glowable" id="btnSnowPwCopy">复制</button>
+          </div>
+        </div>
         <div class="set-row">
           <div class="set-row-main">
             <span class="set-row-title">AstrBot 免密补丁</span>
@@ -714,7 +728,7 @@
         </div>
 
         <div class="kv-list">
-          <div class="kv"><span>工具箱版本</span><b id="kvVersion">1.2.0</b></div>
+          <div class="kv"><span>工具箱版本</span><b id="kvVersion">1.2.1</b></div>
           <div class="kv"><span>监听地址</span><b>127.0.0.1:8788</b></div>
           <div class="kv"><span>组件目录</span><b id="kvCompDir">—</b></div>
           <div class="kv"><span>数据目录</span><b id="kvDataDir">—</b></div>

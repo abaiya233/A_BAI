@@ -1156,6 +1156,51 @@
     if (body) body.scrollTop = 0;
   }
 
+  // ---------------------------------------------------------------- SnowLuma 访问密码
+  // 显示的值就是 data/snowluma-pw.txt 的内容。用户在 SnowLuma 面板里改密码时，
+  // 5100 反代会把新密码写回那个文件，所以每次打开设置都重新拉一次，不做缓存。
+  let snowPw = '';
+
+  async function loadSnowPw() {
+    const inp = $('#inpSnowPw');
+    if (!inp) return;
+    const r = await api('/api/snowluma/password');
+    snowPw = (r.ok && r.data && r.data.password) || '';
+    inp.value = snowPw;
+    inp.type = 'password';
+    inp.placeholder = snowPw ? '' : '装好 SnowLuma 后自动生成';
+    const eye = $('#btnSnowPwEye');
+    if (eye) eye.textContent = '显示';
+  }
+
+  const snowEyeBtn = $('#btnSnowPwEye');
+  if (snowEyeBtn) {
+    snowEyeBtn.addEventListener('click', () => {
+      const inp = $('#inpSnowPw');
+      if (!inp) return;
+      const show = inp.type === 'password';
+      inp.type = show ? 'text' : 'password';
+      snowEyeBtn.textContent = show ? '隐藏' : '显示';
+    });
+  }
+
+  const snowCopyBtn = $('#btnSnowPwCopy');
+  if (snowCopyBtn) {
+    snowCopyBtn.addEventListener('click', async () => {
+      if (!snowPw) return toast('还没有密码，先装好并启动一次 SnowLuma', 'err');
+      try {
+        await navigator.clipboard.writeText(snowPw);
+      } catch {
+        // 剪贴板 API 在无权限时会抛错，退回「选中 + 复制」的老办法
+        const inp = $('#inpSnowPw');
+        inp.type = 'text';
+        inp.select();
+        try { document.execCommand('copy'); } catch { /* 真复制不了就让它自己手抄 */ }
+      }
+      toast('已复制 SnowLuma 访问密码', 'ok');
+    });
+  }
+
   async function openSettings(section) {
     // 拉一次配置，拿目录信息与下载源
     if (!config) {
@@ -1166,6 +1211,8 @@
     $('#inpUser').value = acc.username || '';
     $('#inpPass').value = '';
     $('#inpPass').placeholder = acc.hasPassword ? '已保存，留空表示不修改' : '请输入 MCS 面板密码';
+
+    loadSnowPw();
 
     renderAbout();
     renderMirrors();

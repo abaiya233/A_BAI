@@ -2377,6 +2377,9 @@ main {
 .set-row-title { font-size: 13px; font-weight: 700; }
 .set-row-desc { font-size: 11.5px; line-height: 1.6; color: var(--ink-400); }
 
+/* 一行里并排放两个小按钮（设置页的「显示 / 复制」用） */
+.row-btns { display: flex; gap: 8px; flex-shrink: 0; }
+
 .select {
   height: 38px;
   padding: 0 32px 0 12px;

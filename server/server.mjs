@@ -17,6 +17,7 @@ import net from 'node:net';
 import zlib from 'node:zlib';
 import { spawn, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import crypto from 'node:crypto';
 
 import { Downloader } from './downloader.mjs';
 import { MIRRORS, MIRROR_BY_ID, GROUPS } from './components.mjs';
@@ -35,7 +36,7 @@ const DOWNLOAD_ROOT = path.join(PORTABLE_DATA, 'downloads');
 const RUNTIME_NODE = path.join(APP_ROOT, 'runtime', 'node.exe');
 
 // 工具箱自己的版本号（"关于"页和更新检查都读它）
-const TOOLBOX_VERSION = '1.2.0';
+const TOOLBOX_VERSION = '1.2.1';
 
 fs.mkdirSync(LOG_DIR, { recursive: true });
 fs.mkdirSync(PORTABLE_DATA, { recursive: true });
@@ -340,13 +341,28 @@ async function startDaFeiYu() {
 
   try {
     await task.step(0, async () => {
-      if (await portOpen(FISH_PORTS.snowluma)) return '已在运行，跳过';
       if (!L.snowlumaDir) throw new Error('还没装 SnowLuma，去「设置 → 组件管理」里下载');
       const exe = path.join(L.snowlumaDir, 'node.exe');
       if (!fs.existsSync(exe)) throw new Error('SnowLuma 里找不到 node.exe，重装一下试试');
-      spawnDetached(exe, ['index.mjs'], L.snowlumaDir, path.join(D, 'snowluma.log'));
+
+      // 先把「工具箱保存的密码」和「SnowLuma 实际生效的密码」对齐，再决定要不要动进程
+      const auth = prepareSnowLumaAuth(L, D);
+
+      if (await portOpen(FISH_PORTS.snowluma)) {
+        if (!auth.needRestart) return '已在运行，跳过';
+        // 密码没对齐：必须带新的 bootstrap 变量重起一遍，
+        // 否则反代注入的自动登录会一直拿旧密码去撞，撞满 5 次锁 15 分钟
+        const pid = await listenerPid(FISH_PORTS.snowluma);
+        if (pid && pid > 4) await taskkill(pid);
+        for (let i = 0; i < 40; i++) {
+          if (!(await portOpen(FISH_PORTS.snowluma))) break;
+          await sleep(250);
+        }
+      }
+
+      spawnDetached(exe, ['index.mjs'], L.snowlumaDir, path.join(D, 'snowluma.log'), auth.env);
       if (!(await waitPort(FISH_PORTS.snowluma, 60000))) throw new Error('SnowLuma 端口 5099 未就绪，看运行日志');
-      return '端口 5099 已监听';
+      return auth.note || '端口 5099 已监听';
     });
 
     await task.step(1, async () => {
@@ -859,6 +875,115 @@ function readBody(req) {
  */
 const SNOW_PROXY_PORT = 5100;
 
+// ---------------------------------------------------------------- SnowLuma 认证对齐
+/**
+ * SnowLuma 从 2.2.0 起换了 WebUI 密码机制，跟我们原来的假设不一样了：
+ *
+ *   · 首次启动随机生成一个 16 位 hex 密码，明文**只打印到 stdout 一次**，不落盘；
+ *   · config/webui.json 里只留 scrypt 的 hash + salt，推不回明文；
+ *   · 只要 mustChangePassword 还是 true，每次重启都会再换一个新的；
+ *   · 未改密前，除 7 个白名单接口外全部 403 —— /api/processes 就在外面，
+ *     所以「启动大肥鱼」第 2 步会直接失败。
+ *
+ * 所以不能「等它生成完再去日志里捞密码」：那样密码每次启动都在变，
+ * 下面 snowAutoLoginTag() 注入的自动登录脚本会拿旧密码反复提交，
+ * 撞满 5 次就把这个 IP 锁 15 分钟（用户看到的就是「登录尝试过多，请 N 秒后重试」）。
+ *
+ * 改用官方留的口子 SNOWLUMA_WEBUI_BOOTSTRAP_PASSWORD：
+ * 带上它启动，SnowLuma 直接拿这个值当密码，并把 mustChangePassword 置为 false，
+ * 顺带也就绕过了那道 403。但这段逻辑只在 webui.json 不存在或损坏时才走，
+ * 文件还在就会优先「重新随机」，所以需要重置时得把旧文件挪到备份名。
+ *
+ * 判定原则：mustChangePassword 为 false，说明用户自己在面板里改过密码 ——
+ * 那是他的密码，一律不碰、也不重启，免得把人家的设置冲掉。
+ */
+const SNOW_PW_FILE = 'snowluma-pw.txt';
+const SNOW_DEFAULT_PW_PREFIX = 'dafeiyu-snowluma';
+
+/** 生成一个够用的密码：SnowLuma 的 bootstrap 只校验长度 ≥ 8，不强求复杂度 */
+function newSnowPassword() {
+  return SNOW_DEFAULT_PW_PREFIX + '-' + crypto.randomBytes(6).toString('hex');
+}
+
+/**
+ * 让「工具箱保存的密码」和「SnowLuma 实际生效的密码」保持一致。
+ * @returns {{env: object, needRestart: boolean, note: string, pw: string}}
+ */
+function prepareSnowLumaAuth(L, D) {
+  const pwFile = path.join(D, SNOW_PW_FILE);
+  let pw = '';
+  try { pw = fs.readFileSync(pwFile, 'utf8').trim(); } catch { /* 下面补一个 */ }
+  if (pw.length < 8) {
+    pw = newSnowPassword();
+    fs.writeFileSync(pwFile, pw + '\n', 'utf8');
+  }
+
+  const env = {
+    SNOWLUMA_WEBUI_BOOTSTRAP_PASSWORD: pw,
+    // 无人值守场景：替用户同意协议，否则面板会被 EULA / 隐私政策那道门挡住
+    SNOWLUMA_ACCEPT_EULA: '1',
+    SNOWLUMA_ACCEPT_PRIVACY: '1',
+  };
+
+  const cfgFile = path.join(L.snowlumaDir, 'config', 'webui.json');
+  let needRestart = false;
+  let note = '';
+
+  if (!fs.existsSync(cfgFile)) {
+    needRestart = true;
+    note = '首次运行，已用工具箱保存的密码初始化';
+  } else {
+    let mustChange = null;
+    try {
+      const st = JSON.parse(fs.readFileSync(cfgFile, 'utf8'));
+      mustChange = st && typeof st === 'object' ? st.mustChangePassword : null;
+    } catch {
+      mustChange = 'broken';
+    }
+
+    if (mustChange === true || mustChange === 'broken') {
+      // 从没改过密码：那份随机密码没人知道，挪走让 SnowLuma 重新按我们的密码 seed
+      const bak = cfgFile + '.tbx-bak';
+      try { fs.rmSync(bak, { force: true }); } catch { /* 删不掉就覆盖 */ }
+      try {
+        fs.renameSync(cfgFile, bak);
+      } catch {
+        try { fs.rmSync(cfgFile, { force: true }); } catch { /* 真动不了就让它自己随机 */ }
+      }
+      needRestart = true;
+      note = mustChange === 'broken'
+        ? '配置文件损坏，已让 SnowLuma 重建'
+        : '已把访问密码重置为工具箱保存的值';
+    }
+  }
+
+  return { env, needRestart, note, pw };
+}
+
+/** 读当前保存的 SnowLuma 密码（设置页展示用）。没有就返回空串。 */
+function readSnowPassword() {
+  try {
+    return fs.readFileSync(path.join(resolveLayout().dataRoot, SNOW_PW_FILE), 'utf8').trim();
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * 把新密码写回 data/snowluma-pw.txt。
+ * 由反代在「用户在 SnowLuma 面板里改密码成功」时调用，这样设置页显示的值永远是最新的。
+ */
+function saveSnowPassword(pw) {
+  const s = String(pw || '').trim();
+  if (s.length < 8) return false;
+  try {
+    fs.writeFileSync(path.join(resolveLayout().dataRoot, SNOW_PW_FILE), s + '\n', 'utf8');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * SnowLuma 的登录 token 只存在页面内存里（初版 WebView2 的注释也印证了这点），
  * 所以 iframe 每次加载都会停在登录页。这里往它返回的 HTML 里注入一小段脚本：
@@ -901,6 +1026,13 @@ function snowAutoLoginTag() {
 
 function startSnowProxy() {
   const proxy = http.createServer((req, res) => {
+    // 用户在 SnowLuma 面板里改密码时，请求必然经过这个反代。
+    // 拦下来把新密码同步到本地文件 —— 这是「设置页显示的值能跟着变」的唯一可靠来源：
+    // SnowLuma 只存 scrypt 的 hash + salt，事后推不回明文。
+    const isPwdChange = req.method === 'POST'
+      && String(req.url || '').startsWith('/api/auth/change-password');
+    let capturedPw = '';
+
     const upstream = http.request(
       {
         host: '127.0.0.1',
@@ -915,6 +1047,25 @@ function startSnowProxy() {
         },
       },
       (ur) => {
+        // 改密响应是 JSON，先收全再判断：只有真的 success 才落盘。
+        // 光看请求体不够 —— 旧密码填错、新密码强度不足都会失败，那种情况不能覆盖。
+        if (isPwdChange) {
+          const rc = [];
+          ur.on('data', (c) => rc.push(c));
+          ur.on('end', () => {
+            const body = Buffer.concat(rc);
+            let ok = false;
+            try { ok = JSON.parse(body.toString('utf8')).success === true; } catch { /* 非 JSON 就只透传 */ }
+            if (ok && capturedPw) saveSnowPassword(capturedPw);
+            const h = { ...ur.headers };
+            delete h['transfer-encoding'];
+            h['content-length'] = String(body.length);
+            res.writeHead(ur.statusCode || 200, h);
+            res.end(body);
+          });
+          return;
+        }
+
         const headers = { ...ur.headers };
         // 关键两刀：去掉 DENY 与 frame-ancestors，否则浏览器不渲染
         delete headers['x-frame-options'];
@@ -966,6 +1117,24 @@ function startSnowProxy() {
       }
       res.end('SnowLuma 没在运行');
     });
+    if (isPwdChange) {
+      // 要读请求体才拿得到 newPassword，所以这条路径不能直接 pipe
+      const chunks = [];
+      req.on('data', (c) => chunks.push(c));
+      req.on('end', () => {
+        const raw = Buffer.concat(chunks);
+        try {
+          const j = JSON.parse(raw.toString('utf8'));
+          if (j && typeof j.newPassword === 'string') capturedPw = j.newPassword;
+        } catch { /* 解析不了就原样转发，交给它自己处理 */ }
+        // 原请求头可能是 chunked（没有 length），直接设 content-length 会两个头打架
+        upstream.removeHeader('transfer-encoding');
+        upstream.setHeader('content-length', String(raw.length));
+        upstream.end(raw);
+      });
+      return;
+    }
+
     req.pipe(upstream);
   });
 
@@ -1120,6 +1289,13 @@ const server = http.createServer(async (req, res) => {
       } catch (e) {
         return sendJson(res, { ok: false, message: e.message }, 500);
       }
+    }
+
+    // 设置页要显示 SnowLuma 的访问密码 —— 值就是 data/snowluma-pw.txt 的内容。
+    // 它在用户于面板里改密时由 5100 反代自动更新，所以这里读到的永远是最新的。
+    if (p === '/api/snowluma/password' && req.method === 'GET') {
+      const pw = readSnowPassword();
+      return sendJson(res, { ok: true, password: pw, has: !!pw });
     }
 
     if (p === '/api/log') {
