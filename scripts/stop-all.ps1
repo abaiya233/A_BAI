@@ -20,6 +20,10 @@ $procs = Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pytho
 foreach ($p in $procs) {
     $cl = $p.CommandLine
     if (-not $cl) { continue }
+    # 排除工具箱自己：便携版的 node 跑的就是 <根>\server\server.mjs，
+    # 它的命令行里带 "DaFeiYu"，不排除的话这里会把工具箱后端一起 Stop-Process 掉，
+    # 表现就是点了「停止」之后界面永远停在「正在关闭大肥鱼」。
+    if ($cl -match 'server\.mjs') { continue }
     if ($cl -match 'DaFeiYu' -or $cl -match 'snowluma' -or $cl -match '\.astrbot') {
         $targets += [int]$p.ProcessId
     }
@@ -35,15 +39,14 @@ foreach ($procId in $targets) {
     }
 }
 
-# 3) wait until the ports are really released (max 8s)
-for ($i = 0; $i -lt 16; $i++) {
-    Start-Sleep -Milliseconds 500
-    $still = 0
-    foreach ($p in $ports) {
-        $c = Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue
-        if ($c) { $still = $still + 1 }
-    }
-    if ($still -eq 0) { break }
+# 3) wait until the ports are really released (max 6s)
+#    一次查出全部监听连接再筛端口，别再每个端口单独跑一遍 Get-NetTCPConnection。
+$deadline = (Get-Date).AddSeconds(6)
+while ((Get-Date) -lt $deadline) {
+    $live = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+              Where-Object { $ports -contains $_.LocalPort })
+    if ($live.Count -eq 0) { break }
+    Start-Sleep -Milliseconds 300
 }
 
 exit 0

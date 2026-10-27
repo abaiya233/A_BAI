@@ -36,7 +36,7 @@ const DOWNLOAD_ROOT = path.join(PORTABLE_DATA, 'downloads');
 const RUNTIME_NODE = path.join(APP_ROOT, 'runtime', 'node.exe');
 
 // 工具箱自己的版本号（"关于"页和更新检查都读它）
-const TOOLBOX_VERSION = '1.2.1';
+const TOOLBOX_VERSION = '1.2.2';
 
 fs.mkdirSync(LOG_DIR, { recursive: true });
 fs.mkdirSync(PORTABLE_DATA, { recursive: true });
@@ -246,8 +246,18 @@ function psFile(script, cwd) {
 
 function taskkill(pid) {
   return new Promise((resolve) => {
-    execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, () => resolve());
+    // 加 timeout：万一有进程赖着不退，taskkill 自己也可能长时间不返回，
+    // 那样界面就会一直停在「正在关闭」。15 秒后强制放弃，让后面的步骤继续走。
+    execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, timeout: 15000 }, () => resolve());
   });
+}
+
+/**
+ * 绝不能杀掉自己或自己的父进程。
+ * 杀了自己 = 接口永远返回不了、页面卡在「正在关闭」；杀了父进程 = 把工具箱窗口关掉。
+ */
+function isSelf(pid) {
+  return pid === process.pid || (process.ppid && pid === process.ppid);
 }
 
 /** 查出监听某端口的进程 PID（只认指定进程名的，避免误杀） */
@@ -263,6 +273,34 @@ function listenerPid(port) {
         if (local.endsWith(':' + port)) return resolve(Number(m[m.length - 1]) || null);
       }
       resolve(null);
+    });
+  });
+}
+
+/**
+ * 一次 netstat 查出多个端口各自的监听 PID（Map<端口, PID>）。
+ * 原来每个端口单跑一次 netstat，实测一次 600ms，四个端口就是 2.4 秒纯等待 ——
+ * 这是「停止服务很慢」的主要原因之一。
+ */
+function listenerPids(ports) {
+  return new Promise((resolve) => {
+    const want = new Set(ports.map((p) => String(p)));
+    const out = new Map();
+    execFile('netstat', ['-ano', '-p', 'TCP'], { windowsHide: true, maxBuffer: 8 << 20 }, (err, stdout) => {
+      if (err && !stdout) return resolve(out);
+      for (const line of String(stdout).split(/\r?\n/)) {
+        if (!line.includes('LISTENING')) continue;
+        const m = line.trim().split(/\s+/);
+        if (m.length < 5) continue;
+        const local = m[1];
+        const i = local.lastIndexOf(':');
+        if (i < 0) continue;
+        const port = Number(local.slice(i + 1));
+        if (!want.has(String(port)) || out.has(port)) continue;
+        const pid = Number(m[m.length - 1]) || 0;
+        if (pid > 4) out.set(port, pid);
+      }
+      resolve(out);
     });
   });
 }
@@ -353,7 +391,7 @@ async function startDaFeiYu() {
         // 密码没对齐：必须带新的 bootstrap 变量重起一遍，
         // 否则反代注入的自动登录会一直拿旧密码去撞，撞满 5 次锁 15 分钟
         const pid = await listenerPid(FISH_PORTS.snowluma);
-        if (pid && pid > 4) await taskkill(pid);
+        if (pid && pid > 4 && !isSelf(pid)) await taskkill(pid);
         for (let i = 0; i < 40; i++) {
           if (!(await portOpen(FISH_PORTS.snowluma))) break;
           await sleep(250);
@@ -412,15 +450,25 @@ async function startDaFeiYu() {
     });
 
     await task.step(2, async () => {
-      if (await portOpen(FISH_PORTS.astrbot)) return '已在运行，跳过';
+      // 顺手把免密补丁对齐一次（幂等，已是最新就什么都不做）。
+      // 补丁里除了自动登录，还带着「截获你在面板里登录/改密时的明文」那段 ——
+      // AstrBot 升级换掉 webui 目录后补丁会丢，丢了就会退回「改了密码这里不更新」。
+      try { patchAstrBot(); } catch { /* 没装或没写权限都不该挡住启动 */ }
+      if (await portOpen(FISH_PORTS.astrbot)) {
+        // 已经在跑也补一次：万一 data/astrbot-pw.txt 被误删，还能从历史日志里救回来
+        harvestAstrBotPassword(0);
+        return '已在运行，跳过';
+      }
       const packDir = L.astrbotDir;
       if (!packDir) throw new Error('还没装 AstrBot，去「设置 → 组件管理」里下载');
 
       const logFile = path.join(D, 'astrbot.log');
-      const rootDir =
-        L.astrbotBase && fs.existsSync(path.join(L.astrbotBase, 'root'))
-          ? path.join(L.astrbotBase, 'root')
-          : path.join(D, 'astrbot-root');
+      const rootDir = astrBotRootDir();
+
+      // 记下启动前的日志长度：初始密码只在首次启动打印一次，
+      // 之后只在「这个位置之后」找，日志再大也不会看漏。
+      let logStart = 0;
+      try { logStart = fs.statSync(logFile).size; } catch { /* 还没有日志，从 0 开始 */ }
 
       // 老的结构：内置 python 直接跑后端；新的 Electron 包：直接起 exe
       const py = path.join(packDir, 'backend', 'python', 'python.exe');
@@ -438,7 +486,16 @@ async function startDaFeiYu() {
         spawnDetached(exe, [], packDir, logFile, { ASTRBOT_ROOT: rootDir });
       }
       if (!(await waitPort(FISH_PORTS.astrbot, 120000))) throw new Error('AstrBot 端口 6185 未就绪，看运行日志');
-      return '端口 6185 已监听';
+
+      // 首次启动会打一行「➜  Initial password: xxx」，稍等一下把它捞进
+      // data/astrbot-pw.txt —— 不捞的话设置页是空的，用户只能自己翻日志。
+      let got = '';
+      for (let i = 0; i < 24; i++) {
+        got = harvestAstrBotPassword(logStart);
+        if (got) break;
+        await sleep(250);
+      }
+      return got ? '端口 6185 已监听，账号密码已记到设置页' : '端口 6185 已监听';
     });
 
     await task.step(3, async () => {
@@ -456,23 +513,30 @@ async function startDaFeiYu() {
 
 async function stopDaFeiYu() {
   const cfg = readCfg();
-  // 老布局带一个官方清理脚本，优先用它；便携布局没有脚本，按端口找进程杀
-  const script = cfg.paths.dafeiyu ? path.join(cfg.paths.dafeiyu, 'scripts', 'stop-all.ps1') : '';
+  // 老布局带一个官方清理脚本，优先用它；便携布局没有脚本，按端口找进程杀。
+  //
+  // 关键判断：只有「配置里的路径指向别的目录」才算老布局。
+  // 便携版的 config.json 里 dafeiyu 往往就填着工具箱自己的目录（有些人是从老布局迁移过来的），
+  // 那份 stop-all.ps1 会按命令行扫到工具箱自己的 node 进程并 Stop-Process 掉，
+  // 表现为「点停止后界面永远卡在正在关闭大肥鱼」—— 后端已经死了，页面等不到结果。
+  const legacyRoot = cfg.paths.dafeiyu ? path.resolve(cfg.paths.dafeiyu) : '';
+  const script = legacyRoot && legacyRoot !== path.resolve(APP_ROOT)
+    ? path.join(legacyRoot, 'scripts', 'stop-all.ps1')
+    : '';
   task.begin('dafeiyu-stop', ['停止 AstrBot 与 SnowLuma 全部进程']);
   try {
     await task.step(0, async () => {
       if (script && fs.existsSync(script)) {
-        await psFile(script, cfg.paths.dafeiyu);
+        await psFile(script, legacyRoot);
         return '已清理';
       }
-      const pids = new Set();
-      for (const p of [FISH_PORTS.astrbot, FISH_PORTS.snowluma, FISH_PORTS.channel, FISH_PORTS.onebot]) {
-        const pid = await listenerPid(p);
-        if (pid && pid > 4) pids.add(pid);
-      }
-      if (!pids.size) return '本来就没在运行';
-      for (const pid of pids) await taskkill(pid);
-      return '已停止 ' + pids.size + ' 个进程';
+      // 一次 netstat 拿齐四个端口，别再一个端口跑一遍
+      const map = await listenerPids([FISH_PORTS.astrbot, FISH_PORTS.snowluma, FISH_PORTS.channel, FISH_PORTS.onebot]);
+      const pids = [...new Set(map.values())].filter((id) => id > 4 && !isSelf(id));
+      if (!pids.length) return '本来就没在运行';
+      // 并发杀，之前是一个一个等着，进程多的时候就是几秒的串行等待
+      await Promise.all(pids.map((id) => taskkill(id)));
+      return '已停止 ' + pids.length + ' 个进程';
     });
     task.end(null);
   } catch (e) {
@@ -523,13 +587,10 @@ async function stopMcs() {
   task.begin('mcs-stop', ['停止面板与守护进程']);
   try {
     await task.step(0, async () => {
-      const pids = [];
-      for (const p of [MCS_PORTS.web, MCS_PORTS.daemon]) {
-        const pid = await listenerPid(p);
-        if (pid && pid > 4) pids.push(pid);
-      }
+      const map = await listenerPids([MCS_PORTS.web, MCS_PORTS.daemon]);
+      const pids = [...new Set(map.values())].filter((id) => id > 4 && !isSelf(id));
       if (!pids.length) return '本来就没在运行';
-      for (const pid of pids) await taskkill(pid);
+      await Promise.all(pids.map((id) => taskkill(id)));
       mcs.session.invalidate();
       return '已停止 ' + pids.length + ' 个进程';
     });
@@ -718,19 +779,74 @@ const PATCH_MARK = 'TBX-AUTOLOGIN';
 const PATCH_JS = `
 <script>/* ${PATCH_MARK} 大肥鱼工具箱 · AstrBot 免密补丁。删掉这一段即可恢复原样。 */
 (function(){
+  var TBX = 'http://127.0.0.1:__TBX_PORT__';
+  var raw = window.fetch ? window.fetch.bind(window) : null;
+
+  // ---- 1) 把「你自己在面板里登录 / 改密」的明文密码送回工具箱 ----
+  // AstrBot 磁盘上只存 pbkdf2 哈希，明文只在这两个请求的 body 里出现过一次：
+  //   POST /api/auth/login         { username, password }
+  //   POST /api/auth/account/edit  { password, new_password, confirm_password, new_username }
+  // 不在这里截住，工具箱记的就永远是旧密码 —— 也就是「我改了密码，这里怎么还是旧的」。
+  if (raw && !window.__tbxHook){
+    window.__tbxHook = 1;
+    window.fetch = function(input, init){
+      var hit = null, url = '';
+      try {
+        url = typeof input === 'string' ? input : ((input && input.url) || '');
+        if (init && typeof init.body === 'string' && url.indexOf('/api/auth/') >= 0){
+          var b = JSON.parse(init.body);
+          if (url.indexOf('/api/auth/login') >= 0 && b && b.password){
+            hit = { u: b.username, p: b.password };
+          } else if (url.indexOf('/api/auth/account/edit') >= 0 && b && b.new_password){
+            hit = { u: b.new_username, p: b.new_password };
+          }
+        }
+      } catch(e){}
+      var pr = raw(input, init);
+      if (hit && pr && pr.then){
+        pr.then(function(r){
+          try{
+            // clone 一份读结果、不动原响应；只有真成功才记 —— 旧密码填错时不能把好的覆盖掉
+            r.clone().json().then(function(j){
+              var bad = (j && j.status === 'error') || (j && j.data && j.data.status === 'error');
+              if (bad || !hit.p) return;
+              raw(TBX + '/api/astrbot/credential', {
+                method: 'POST',
+                body: JSON.stringify({ username: hit.u || '', password: hit.p })
+              }).catch(function(){});
+            }).catch(function(){});
+          }catch(e){}
+        }).catch(function(){});
+      }
+      return pr;
+    };
+  }
+
+  // ---- 2) 自动登录 ----
   try{
-    if (localStorage.getItem('token')) return;
-    if (sessionStorage.getItem('tbx_auth_tried')) return;
-    sessionStorage.setItem('tbx_auth_tried','1');
+    // AstrBot 4.29.x 起把登录态放进了 HttpOnly 的 cookie（astrbot_dashboard_jwt），
+    // JS 既读不到也写不了，所以老办法「往 localStorage 塞 token」在 4.29 上已经彻底失效。
+    // 改为让页面自己发一次同源登录请求：浏览器收到 Set-Cookie 会自己存下，
+    // 全程不碰 cookie 内容，刷新后就是已登录状态。
+    var KEY = 'tbx_auth_at';
+    var last = Number(localStorage.getItem(KEY) || 0);
+    if (Date.now() - last < 3600 * 1000) return;   // 一小时内不重复登录，躲开 auth_rate_limit
     var x = new XMLHttpRequest();
-    x.open('GET','http://127.0.0.1:__TBX_PORT__/api/astrbot/token',false);
+    x.open('GET', TBX + '/api/astrbot/token', false);
     x.send(null);
-    var d = JSON.parse(x.responseText||'{}');
-    if (d && d.ok && d.token){
-      localStorage.setItem('token', d.token);
-      if (d.username) localStorage.setItem('user', d.username);
-      location.reload();
-    }
+    var d = JSON.parse(x.responseText || '{}');
+    if (!d || !d.ok || !d.password) return;
+    raw('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ username: d.username || 'astrbot', password: d.password })
+    }).then(function(r){ return r.json(); }).then(function(j){
+      if (j && j.status === 'ok'){
+        localStorage.setItem(KEY, String(Date.now()));
+        location.reload();
+      }
+    }).catch(function(){});
   }catch(e){}
 })();
 </script>`;
@@ -748,7 +864,13 @@ function patchAstrBot() {
   const port = readCfg().port;
   let html = fs.readFileSync(file, 'utf8');
 
-  const already = html.includes(PATCH_MARK) && html.includes('127.0.0.1:' + port + '/api/astrbot/token');
+  // 判断「已经是最新补丁」要带上这几个新标记：
+  // 老补丁里也有同一个 token 接口地址，只看地址会误判成已最新、永远不升级。
+  const already = html.includes(PATCH_MARK)
+    && html.includes('127.0.0.1:' + port + '/api/astrbot/token')
+    && html.includes('tbx_auth_at')
+    && html.includes('__tbxHook')
+    && html.includes('/api/astrbot/credential');
   if (already) return { ok: true, changed: false, file };
 
   const bak = file + '.tbx-bak';
@@ -791,6 +913,122 @@ async function astrBotToken() {
     } catch { /* 试下一个 */ }
   }
   throw new Error('AstrBot 登录失败，密码文件可能过期了');
+}
+
+/**
+ * 读 data/astrbot-pw.txt。
+ * 免密补丁需要把密码交给 AstrBot 页面自己 POST 一次登录（4.29.x 的 cookie 是 HttpOnly，
+ * 工具箱没法替它写登录态），所以这个值要经 /api/astrbot/token 传给 6185 那个页面。
+ * 该接口的 CORS 只放行 http://127.0.0.1:6185，别的源读不到。
+ */
+function readAstrBotPassword() {
+  try {
+    return fs.readFileSync(path.join(resolveLayout().dataRoot, 'astrbot-pw.txt'), 'utf8').trim();
+  } catch {
+    return '';
+  }
+}
+
+/** 写 data/astrbot-pw.txt（用户在面板里改密 / 重新登录后由页面内补丁回传） */
+function saveAstrBotPassword(pw) {
+  const s = String(pw || '').trim();
+  if (!s) return false;
+  try {
+    fs.writeFileSync(path.join(resolveLayout().dataRoot, 'astrbot-pw.txt'), s + '\n', 'utf8');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 把 AstrBot 首次启动时打印的初始密码从日志里抄下来。
+ *
+ * 为什么必须做这件事：AstrBot 磁盘上只有 pbkdf2 哈希，
+ * 初始密码只在首次启动时往 stdout 打印一次（`➜  Initial password: xxx`），
+ * 而我们把它的 stdout 重定向到了 data/astrbot.log —— 这是**唯一**能拿到明文的地方。
+ * 不自动抄，用户就只能自己去翻日志，等于进不去面板。
+ *
+ * @param {number} fromOffset 这次启动前日志的长度。只看新增部分最准，日志再大也不怕。
+ */
+function harvestAstrBotPassword(fromOffset = 0) {
+  const D = resolveLayout().dataRoot;
+  const pwFile = path.join(D, 'astrbot-pw.txt');
+
+  // 已经有记录就不动它：可能是补丁回传的、也可能是用户手填的，都比日志里的旧值可信
+  let cur = '';
+  try { cur = fs.readFileSync(pwFile, 'utf8').trim(); } catch { /* 没有 */ }
+  if (cur) return cur;
+
+  const logFile = path.join(D, 'astrbot.log');
+  const RE = /Initial password:\s*(\S+)/;
+
+  const readFrom = (offset, maxBytes) => {
+    try {
+      const st = fs.statSync(logFile);
+      const start = Math.max(0, Math.min(offset, st.size));
+      const end = Math.min(st.size, start + maxBytes);
+      if (end <= start) return '';
+      const fd = fs.openSync(logFile, 'r');
+      const buf = Buffer.alloc(end - start);
+      fs.readSync(fd, buf, 0, end - start, start);
+      fs.closeSync(fd);
+      return buf.toString('utf8');
+    } catch {
+      return '';
+    }
+  };
+
+  // 先看这次启动新增的部分（最准）
+  let m = readFrom(fromOffset, 4 << 20).match(RE);
+  // 兜底再全文件扫一遍（限 8MB；pw 文件被误删、日志还在的情况靠这条救回来）
+  if (!m) m = readFrom(0, 8 << 20).match(RE);
+  if (!m) return '';
+
+  const pw = m[1];
+  saveAstrBotPassword(pw);
+  return pw;
+}
+
+/** AstrBot 的数据根目录（与启动时用的是同一套判断，避免两处跑偏） */
+function astrBotRootDir() {
+  const L = resolveLayout();
+  return L.astrbotBase && fs.existsSync(path.join(L.astrbotBase, 'root'))
+    ? path.join(L.astrbotBase, 'root')
+    : path.join(L.dataRoot, 'astrbot-root');
+}
+
+/**
+ * 读 AstrBot 的登录用户名。
+ * 优先用 data/astrbot-user.txt —— 那是用户在工具箱设置页里手填的，
+ * 按「自动登录以面板为准」的原则，手填的要压过 AstrBot 自己 cmd_config.json 里的。
+ * 没手填过才回落到 cmd_config.json 的 dashboard.username（该文件带 BOM，须先剥掉）。
+ */
+function readAstrBotUsername() {
+  try {
+    const manual = fs.readFileSync(path.join(resolveLayout().dataRoot, 'astrbot-user.txt'), 'utf8').trim();
+    if (manual) return manual;
+  } catch { /* 没填过，往下读 AstrBot 自己的 */ }
+  try {
+    const f = path.join(astrBotRootDir(), 'data', 'cmd_config.json');
+    const j = JSON.parse(fs.readFileSync(f, 'utf8').replace(/^\uFEFF/, ''));
+    const u = j && j.dashboard && j.dashboard.username;
+    return typeof u === 'string' ? u.trim() : '';
+  } catch {
+    return '';
+  }
+}
+
+/** 写 data/astrbot-user.txt（用户在设置页里手填的用户名优先用它） */
+function saveAstrBotUsername(name) {
+  const s = String(name || '').trim();
+  if (!s) return false;
+  try {
+    fs.writeFileSync(path.join(resolveLayout().dataRoot, 'astrbot-user.txt'), s + '\n', 'utf8');
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------- HTTP
@@ -1271,6 +1509,9 @@ const server = http.createServer(async (req, res) => {
       let payload;
       try {
         payload = await astrBotToken();
+        // 4.29.x 的登录态是 HttpOnly cookie，页面必须自己再 POST 一次登录，
+        // 所以把密码一并交给它（这个接口的 CORS 已限定 6185 来源）
+        payload.password = readAstrBotPassword();
       } catch (e) {
         payload = { ok: false, message: e.message };
       }
@@ -1291,11 +1532,101 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
-    // 设置页要显示 SnowLuma 的访问密码 —— 值就是 data/snowluma-pw.txt 的内容。
-    // 它在用户于面板里改密时由 5100 反代自动更新，所以这里读到的永远是最新的。
-    if (p === '/api/snowluma/password' && req.method === 'GET') {
-      const pw = readSnowPassword();
-      return sendJson(res, { ok: true, password: pw, has: !!pw });
+    // AstrBot 页面里的补丁把「用户自己在面板里登录 / 改密」时的明文密码送回这里。
+    // AstrBot 磁盘上只有 pbkdf2 哈希，明文只在那两个请求的 body 里出现过一次，
+    // 不在这里截住就永远拿不到了（这正是「改了密码这里还是旧的」的根因）。
+    // CORS 同样只放行 6185，别的网页写不进来。
+    if (p === '/api/astrbot/credential' && req.method === 'POST') {
+      const origin = req.headers.origin || '';
+      const fromPanel = /^http:\/\/(127\.0\.0\.1|localhost):6185$/.test(origin);
+      const head = {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-store',
+        ...(fromPanel ? { 'Access-Control-Allow-Origin': origin } : {}),
+      };
+      if (!fromPanel) {
+        res.writeHead(403, head);
+        res.end(JSON.stringify({ ok: false, message: '来源不被允许' }));
+        return;
+      }
+      const body = await readBody(req);
+      const pw = typeof body.password === 'string' ? body.password : '';
+      const ok = saveAstrBotPassword(pw);
+      res.writeHead(200, head);
+      res.end(JSON.stringify({
+        ok,
+        // 回一句最新的读值，方便前端/日志核对
+        username: readAstrBotUsername(),
+        saved: ok ? pw.length : 0,
+      }));
+      return;
+    }
+
+    // 设置页要展示 / 保存各组件访问密码。值都来自本机文件，不出本机。
+    //   snowluma → data/snowluma-pw.txt（启动时 seed 用，反代在改密后也会自动回写）
+    //   astrbot  → data/astrbot-pw.txt（首启生成；面板里登录/改密时由页面补丁回传；也可手填）
+    //   mcs      → server/config.json 的 mcsAccount（用户自己填的，明文存）
+    if (p === '/api/credentials' && req.method === 'GET') {
+      const cfg = readCfg();
+      const mcs = cfg.mcsAccount || {};
+      // 还是空的就顺手再从日志里找一次：启动时可能密码打得太晚没抓到，
+      // 用户一打开设置页这里补上，总比让他自己去翻日志强。
+      if (!readAstrBotPassword()) {
+        try { harvestAstrBotPassword(0); } catch { /* 捞不到就算了 */ }
+      }
+      return sendJson(res, {
+        ok: true,
+        snowluma: readSnowPassword(),
+        astrbot: readAstrBotPassword(),
+        astrbotUser: readAstrBotUsername(),
+        mcs: mcs.password || '',
+        mcsUser: mcs.username || '',
+      });
+    }
+
+    // 手填保存。原则：**自动登录一律用这里存的值**，所以面板里改完要立刻生效，
+    // 不能留一份「面板显示新密码、自动登录还在用旧的」的分裂状态。
+    // 字段为空 = 不修改（留空就是不改，避免误清空）。
+    if (p === '/api/credentials' && req.method === 'POST') {
+      const body = await readBody(req);
+      const saved = {};
+      const cfg = readCfg();
+      let mcsTouched = false;
+
+      if (typeof body.snowluma === 'string' && body.snowluma.trim()) {
+        saved.snowluma = saveSnowPassword(body.snowluma.trim()) ? 'ok' : 'too-short';
+      }
+      if (typeof body.astrbot === 'string' && body.astrbot.trim()) {
+        saved.astrbot = saveAstrBotPassword(body.astrbot.trim()) ? 'ok' : 'fail';
+      }
+      if (typeof body.astrbotUser === 'string' && body.astrbotUser.trim()) {
+        saved.astrbotUser = saveAstrBotUsername(body.astrbotUser.trim()) ? 'ok' : 'fail';
+      }
+      if (typeof body.mcsUser === 'string') {
+        // 用户名允许清空（有些人的 MCS 就是没设用户名）
+        cfg.mcsAccount.username = body.mcsUser.trim();
+        mcsTouched = true;
+      }
+      if (typeof body.mcsPass === 'string' && body.mcsPass.length) {
+        cfg.mcsAccount.password = body.mcsPass;
+        mcsTouched = true;
+      }
+      if (mcsTouched) {
+        writeCfg(cfg);
+        mcs.session.invalidate();   // 换了密码，旧的登录态作废
+        saved.mcs = 'ok';
+      }
+
+      return sendJson(res, {
+        ok: true,
+        saved,
+        // 回读最新值，前端直接拿来刷新，不用再请求一次
+        snowluma: readSnowPassword(),
+        astrbot: readAstrBotPassword(),
+        astrbotUser: readAstrBotUsername(),
+        mcs: cfg.mcsAccount.password || '',
+        mcsUser: cfg.mcsAccount.username || '',
+      });
     }
 
     if (p === '/api/log') {

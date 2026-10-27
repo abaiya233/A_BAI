@@ -2380,6 +2380,58 @@ main {
 /* 一行里并排放两个小按钮（设置页的「显示 / 复制」用） */
 .row-btns { display: flex; gap: 8px; flex-shrink: 0; }
 
+/* 设置页里展示的密码值：等宽字体，方便逐位核对 */
+.pw-val { font-family: var(--font-mono, ui-monospace, Consolas, monospace); letter-spacing: 0.4px; }
+
+/* 输入框 + 显示/复制按钮并排 */
+.pw-field { display: flex; gap: 8px; align-items: center; }
+.pw-field input { flex: 1; min-width: 0; }
+
+/* 密码板块按「这个组件装没装」显隐。老坑：.set-row 自带 display:flex、.field 自带
+   display:block，作者样式优先级高于 UA 的 [hidden]{display:none}，
+   所以不补这几条，hidden 属性就形同虚设。 */
+#mcsCredBlock[hidden],
+#rowCredAstrbotUser[hidden],
+#rowCredAstrbot[hidden],
+#rowCredSnowluma[hidden],
+#rowPatchAstrbot[hidden] {
+  display: none;
+}
+
+/* AstrBot 的账号/密码是只读展示：真要改密码得去 AstrBot 面板，
+   在这里改只会改到一个没人用的副本上，反而误导。 */
+.field input[readonly] {
+  background: rgba(15, 23, 42, 0.035);
+  color: var(--ink-700, #334155);
+  cursor: default;
+}
+
+.field input[readonly]:focus {
+  border-color: rgba(15, 23, 42, 0.12);
+  box-shadow: none;
+}
+
+/* 密码没读到时的提示条：得让人一眼看见该去哪儿找 */
+.cred-warn {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: rgba(234, 88, 12, 0.08);
+  border: 1px solid rgba(234, 88, 12, 0.22);
+  font-size: 11.5px;
+  line-height: 1.65;
+  color: #b45309;
+}
+
+.cred-warn code {
+  font-family: var(--font-mono, ui-monospace, Consolas, monospace);
+  background: rgba(234, 88, 12, 0.12);
+  padding: 1px 5px;
+  border-radius: 5px;
+}
+
+.cred-warn[hidden] { display: none; }
+
 .select {
   height: 38px;
   padding: 0 32px 0 12px;

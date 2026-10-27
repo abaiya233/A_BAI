@@ -1156,50 +1156,123 @@
     if (body) body.scrollTop = 0;
   }
 
-  // ---------------------------------------------------------------- SnowLuma 访问密码
-  // 显示的值就是 data/snowluma-pw.txt 的内容。用户在 SnowLuma 面板里改密码时，
-  // 5100 反代会把新密码写回那个文件，所以每次打开设置都重新拉一次，不做缓存。
-  let snowPw = '';
+  // ---------------------------------------------------------------- 各组件访问密码
+  // 三个密码框都是**可编辑输入框**，并且「口令以面板为准」：
+  //   打开设置 → 把本机记录的值填进来 → 你改完点「保存并登录」→ 写回本机文件。
+  // 自动登录 / 免密注入读的就是这几个文件，所以保存即生效，不会有
+  // 「面板显示新密码、自动登录还在用旧的」这种分裂状态。
+  //   snowluma：data/snowluma-pw.txt（启动时 seed 用，反代改密后也会自动回写）
+  //   astrbot ：data/astrbot-pw.txt（首启生成；面板里登录/改密时由页面补丁回传）
+  //   astrbotUser：data/astrbot-user.txt，没手填过就回落到 cmd_config.json
+  //   mcs     ：server/config.json 的 mcsAccount
+  const PW_INPUT = {
+    snowluma: '#inpSnowlumaPass',
+    astrbot: '#inpAstrBotPass',
+    mcs: '#inpPass',
+  };
 
-  async function loadSnowPw() {
-    const inp = $('#inpSnowPw');
-    if (!inp) return;
-    const r = await api('/api/snowluma/password');
-    snowPw = (r.ok && r.data && r.data.password) || '';
-    inp.value = snowPw;
-    inp.type = 'password';
-    inp.placeholder = snowPw ? '' : '装好 SnowLuma 后自动生成';
-    const eye = $('#btnSnowPwEye');
-    if (eye) eye.textContent = '显示';
+  const pwInput = (k) => $(PW_INPUT[k]);
+
+  // 打开设置时 MCS 密码的快照，用来判断「这次保存到底有没有改 MCS 密码」——
+  // 没改就别去登一次 MCS，否则只改 AstrBot 密码也会弹一句「MCS 登录没成功」，很误导。
+  let mcsPassSnapshot = '';
+
+  /** 复制到剪贴板；无权限时退回「临时 textarea + execCommand」的老办法 */
+  async function copyText(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch { /* 走下面的兜底 */ }
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch { /* 真复制不了就手抄 */ }
+    ta.remove();
+    return ok;
   }
 
-  const snowEyeBtn = $('#btnSnowPwEye');
-  if (snowEyeBtn) {
-    snowEyeBtn.addEventListener('click', () => {
-      const inp = $('#inpSnowPw');
+  /** 把后端读到的值填进各输入框，并把「显示」按钮复位成密文状态 */
+  function fillCredentials(d) {
+    for (const k of Object.keys(PW_INPUT)) {
+      const el = pwInput(k);
+      if (!el) continue;
+      el.value = d[k] || '';
+      el.type = 'password';
+    }
+    const u = $('#inpAstrBotUser');
+    if (u) u.value = String(d.astrbotUser || '').trim();
+    // 密码还是空的（说明日志里也没捞到），给一条能照着做的指引，别让人干瞪眼
+    const warn = $('#warnAstrbotPw');
+    if (warn) warn.hidden = !!String(d.astrbot || '').trim() || !installed('astrbot');
+    $$('[data-pw][data-act="eye"]').forEach((b) => { b.textContent = '显示'; });
+    const m = pwInput('mcs');
+    mcsPassSnapshot = m ? m.value : '';
+  }
+
+  /**
+   * 没装的组件不占版面：MCS / SnowLuma / AstrBot 三块各自只在装了之后才出现。
+   * 「各组件的访问密码」这个分组标题也只在底下还剩东西时才显示。
+   */
+  function applyCredVisibility() {
+    // status 还没拉到（components 缺失）时一律显示，宁可多显示也别把人要用的藏了
+    const list = status && Array.isArray(status.components) ? status.components : null;
+    const has = (id) => (list ? list.some((c) => c.id === id && c.installed) : true);
+    const hasMcs = has('mcsmanager');
+    const hasSnow = has('snowluma');
+    const hasBot = has('astrbot');
+    const set = (sel, on) => {
+      const el = $(sel);
+      if (el) el.hidden = !on;
+    };
+    set('#mcsCredBlock', hasMcs);
+    set('#rowCredSnowluma', hasSnow);
+    set('#rowCredAstrbot', hasBot);
+    set('#rowCredAstrbotUser', hasBot);
+    set('#rowPatchAstrbot', hasBot);
+    set('#credTitleBlock', hasSnow || hasBot);
+  }
+
+  async function loadCredentials() {
+    const r = await api('/api/credentials');
+    fillCredentials((r.ok && r.data) || {});
+    applyCredVisibility();
+  }
+
+  // AstrBot 账号的复制按钮（密码那几个走下面的 data-pw 通用逻辑）
+  (function bindAstrBotUserCopy() {
+    const btn = $('#btnAstrBotUserCopy');
+    const inp = $('#inpAstrBotUser');
+    if (!btn || !inp) return;
+    btn.addEventListener('click', async () => {
+      const v = inp.value.trim();
+      if (!v) return toast('还没有 AstrBot 账号', 'err');
+      await copyText(v);
+      toast('已复制 AstrBot 账号', 'ok');
+    });
+  })();
+
+  // 「显示 / 复制」对所有密码框通用：按 data-pw 找到对应的 input，
+  // 显示就切 type，复制就取框里的当前值（你刚改的也能直接复制）。
+  $$('[data-pw]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const inp = pwInput(btn.dataset.pw);
       if (!inp) return;
-      const show = inp.type === 'password';
-      inp.type = show ? 'text' : 'password';
-      snowEyeBtn.textContent = show ? '隐藏' : '显示';
-    });
-  }
-
-  const snowCopyBtn = $('#btnSnowPwCopy');
-  if (snowCopyBtn) {
-    snowCopyBtn.addEventListener('click', async () => {
-      if (!snowPw) return toast('还没有密码，先装好并启动一次 SnowLuma', 'err');
-      try {
-        await navigator.clipboard.writeText(snowPw);
-      } catch {
-        // 剪贴板 API 在无权限时会抛错，退回「选中 + 复制」的老办法
-        const inp = $('#inpSnowPw');
-        inp.type = 'text';
-        inp.select();
-        try { document.execCommand('copy'); } catch { /* 真复制不了就让它自己手抄 */ }
+      if (btn.dataset.act === 'eye') {
+        const reveal = inp.type === 'password';
+        inp.type = reveal ? 'text' : 'password';
+        btn.textContent = reveal ? '隐藏' : '显示';
+        return;
       }
-      toast('已复制 SnowLuma 访问密码', 'ok');
+      const v = inp.value.trim();
+      if (!v) return toast('还没有密码，先启动一次或直接填在框里', 'err');
+      await copyText(v);
+      toast('已复制密码', 'ok');
     });
-  }
+  });
 
   async function openSettings(section) {
     // 拉一次配置，拿目录信息与下载源
@@ -1209,17 +1282,18 @@
     }
     const acc = (status && status.account) || {};
     $('#inpUser').value = acc.username || '';
-    $('#inpPass').value = '';
-    $('#inpPass').placeholder = acc.hasPassword ? '已保存，留空表示不修改' : '请输入 MCS 面板密码';
+    // 密码统一由 loadCredentials 从 /api/credentials 填（以本机记录的为准），
+    // 这里只保证是密文状态，别让上次点过「显示」的框亮着。
+    $('#inpPass').type = 'password';
 
-    loadSnowPw();
+    await loadCredentials();
 
     renderAbout();
     renderMirrors();
 
     sheetSettings.hidden = false;
     setSection(section || 'components');
-    if (section === 'account') setTimeout(() => $('#inpPass').focus(), 80);
+    if (section === 'account' && installed('mcsmanager')) setTimeout(() => $('#inpPass').focus(), 80);
 
     // 进到下载中心就顺手查一下版本（3 分钟内不重复查，免得刷 GitHub）
     if ((section || 'components') === 'components' && Date.now() - checkedAt > 180000) {
@@ -1269,18 +1343,46 @@
   // ---- 账号保存
 
   $('#btnSettingsSave').addEventListener('click', async () => {
-    const username = $('#inpUser').value.trim();
-    const password = $('#inpPass').value;
-    if (!username) return toast('用户名不能为空', 'err');
-    const r = await post('/api/mcs/account', { username, password });
-    if (!r.ok) return toast('保存失败', 'err');
-    toast('已保存，正在登录…');
-    const ok = await mcsLogin(false);
-    if (ok) {
-      closeSettings();
-      toast('免密登录成功', 'ok');
-      poll();
+    // 一次提交三组值。空字段后端会跳过（留空 = 不修改）。
+    const body = {
+      mcsUser: $('#inpUser').value.trim(),
+      mcsPass: $('#inpPass').value,
+      astrbotUser: $('#inpAstrBotUser').value.trim(),
+      astrbot: $('#inpAstrBotPass').value,
+      snowluma: $('#inpSnowlumaPass').value,
+    };
+    // 先判断 MCS 密码有没有真的改，再决定保存后要不要去验一次登录
+    const mcsChanged = !!body.mcsPass && body.mcsPass !== mcsPassSnapshot;
+    const r = await post('/api/credentials', body);
+    if (!r.ok || (r.data && r.data.ok === false)) {
+      const msg = r.data && r.data.message ? '：' + r.data.message : '';
+      return toast('保存失败' + msg, 'err');
     }
+
+    const saved = (r.data && r.data.saved) || {};
+    fillCredentials(r.data || {});
+    applyCredVisibility();
+
+    if (saved.snowluma === 'too-short') {
+      // 没存进去，就别把他刚打的字冲掉
+      const el = pwInput('snowluma');
+      if (el) el.value = body.snowluma;
+      return toast('SnowLuma 密码至少 8 位，这一项没保存', 'err');
+    }
+
+    // MCS 密码这次真的改了，就顺手登录一次，顺便验证对不对
+    if (mcsChanged && installed('mcsmanager')) {
+      toast('已保存，正在登录 MCS…');
+      const ok = await mcsLogin(false);
+      if (ok) {
+        closeSettings();
+        toast('免密登录成功', 'ok');
+        poll();
+        return;
+      }
+      return toast('已保存，但 MCS 登录没成功，密码可能不对', 'err');
+    }
+    toast('已保存，下次打开面板就用这个密码', 'ok');
   });
 
   $('#btnPatch').addEventListener('click', async () => {

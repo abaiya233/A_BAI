@@ -570,32 +570,52 @@
       <section class="set-sec" id="sec-account">
         <div class="set-sec-head">
           <h2>账号与免密</h2>
-          <p>密码只存在你本机的 <code>server/config.json</code> 里，不会上传到任何地方。</p>
+          <p>密码只存在你本机的 <code>data</code> 目录和 <code>server/config.json</code> 里，不会上传到任何地方。</p>
         </div>
 
-        <label class="field">
-          <span>MCS 面板用户名</span>
-          <input id="inpUser" type="text" autocomplete="off" spellcheck="false" placeholder="例如 阿白不会睡觉">
-        </label>
-        <label class="field">
-          <span>MCS 面板密码</span>
-          <input id="inpPass" type="password" autocomplete="new-password" placeholder="留空表示不修改">
-        </label>
-        <label class="field">
-          <span>SnowLuma 访问密码</span>
-          <input id="inpSnowPw" type="password" readonly autocomplete="off" placeholder="装好 SnowLuma 后自动生成">
-        </label>
-        <div class="set-row">
-          <div class="set-row-main">
-            <span class="set-row-title">打开 QQ 连接器面板会自动填入</span>
-            <span class="set-row-desc">你在 SnowLuma 面板里改过密码的话，这里会跟着更新，不用手动同步。</span>
-          </div>
-          <div class="row-btns">
-            <button class="btn btn-ghost btn-sm glowable" id="btnSnowPwEye">显示</button>
-            <button class="btn btn-ghost btn-sm glowable" id="btnSnowPwCopy">复制</button>
+        <div id="mcsCredBlock">
+          <label class="field">
+            <span>MCS 面板用户名</span>
+            <input id="inpUser" type="text" autocomplete="off" spellcheck="false" placeholder="例如 阿白不会睡觉">
+          </label>
+          <div class="field">
+            <span>MCS 面板密码</span>
+            <div class="pw-field">
+              <input id="inpPass" type="password" autocomplete="new-password" placeholder="请输入 MCS 面板密码">
+              <button type="button" class="btn btn-ghost btn-sm glowable" data-pw="mcs" data-act="eye">显示</button>
+              <button type="button" class="btn btn-ghost btn-sm glowable" data-pw="mcs" data-act="copy">复制</button>
+            </div>
           </div>
         </div>
-        <div class="set-row">
+        <div class="set-block" id="credTitleBlock">
+          <span class="set-block-title">各组件的访问密码</span>
+          <p class="set-row-desc">自动登录一律用这里填的值。AstrBot 面板里改过密码会自动同步过来；万一没同步到，你也可以直接改这里，保存后立即生效。</p>
+        </div>
+        <div class="field" id="rowCredAstrbotUser">
+          <span>AstrBot 用户名</span>
+          <div class="pw-field">
+            <input id="inpAstrBotUser" type="text" autocomplete="off" spellcheck="false" placeholder="默认 astrbot">
+            <button type="button" class="btn btn-ghost btn-sm glowable" id="btnAstrBotUserCopy">复制</button>
+          </div>
+        </div>
+        <div class="field" id="rowCredAstrbot">
+          <span>AstrBot 密码</span>
+          <div class="pw-field">
+            <input id="inpAstrBotPass" type="password" autocomplete="off" spellcheck="false" placeholder="启动一次后自动记录，也可以手动填">
+            <button type="button" class="btn btn-ghost btn-sm glowable" data-pw="astrbot" data-act="eye">显示</button>
+            <button type="button" class="btn btn-ghost btn-sm glowable" data-pw="astrbot" data-act="copy">复制</button>
+          </div>
+          <p class="cred-warn" id="warnAstrbotPw" hidden>没读到初始密码。点首页「查看运行日志」搜 <code>Initial password</code>，把后面那串填到上面的框里就行。</p>
+        </div>
+        <div class="field" id="rowCredSnowluma">
+          <span>SnowLuma 密码（QQ 连接器）</span>
+          <div class="pw-field">
+            <input id="inpSnowlumaPass" type="password" autocomplete="off" spellcheck="false" placeholder="启动一次后自动生成，也可以手动填">
+            <button type="button" class="btn btn-ghost btn-sm glowable" data-pw="snowluma" data-act="eye">显示</button>
+            <button type="button" class="btn btn-ghost btn-sm glowable" data-pw="snowluma" data-act="copy">复制</button>
+          </div>
+        </div>
+        <div class="set-row" id="rowPatchAstrbot">
           <div class="set-row-main">
             <span class="set-row-title">AstrBot 免密补丁</span>
             <span class="set-row-desc">让嵌入的 AstrBot 面板不用登一次。它升级换掉 webui 目录后会失效，届时点一下即可。</span>
@@ -728,7 +748,7 @@
         </div>
 
         <div class="kv-list">
-          <div class="kv"><span>工具箱版本</span><b id="kvVersion">1.2.1</b></div>
+          <div class="kv"><span>工具箱版本</span><b id="kvVersion">1.2.2</b></div>
           <div class="kv"><span>监听地址</span><b>127.0.0.1:8788</b></div>
           <div class="kv"><span>组件目录</span><b id="kvCompDir">—</b></div>
           <div class="kv"><span>数据目录</span><b id="kvDataDir">—</b></div>
