@@ -57,8 +57,8 @@
 需要 Node.js 22 以上。壳是 C# 写的，**不编译也能跑** —— 直接起后端，浏览器打开即可：
 
 ```bash
-git clone https://github.com/abaiya233/abai.git
-cd abai
+git clone https://github.com/abaiya233/A_BAI.git
+cd A_BAI
 node server/server.mjs --open
 ```
 
