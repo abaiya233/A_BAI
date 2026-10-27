@@ -37,7 +37,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const DIST = path.join(ROOT, 'dist');
 
-const VERSION = '1.2.2';
+const VERSION = '1.2.3';
 const FOLDER = `DaFeiYuToolbox-v${VERSION}`;
 
 const args = process.argv.slice(2);

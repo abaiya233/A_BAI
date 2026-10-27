@@ -36,7 +36,7 @@ const DOWNLOAD_ROOT = path.join(PORTABLE_DATA, 'downloads');
 const RUNTIME_NODE = path.join(APP_ROOT, 'runtime', 'node.exe');
 
 // 工具箱自己的版本号（"关于"页和更新检查都读它）
-const TOOLBOX_VERSION = '1.2.2';
+const TOOLBOX_VERSION = '1.2.3';
 
 fs.mkdirSync(LOG_DIR, { recursive: true });
 fs.mkdirSync(PORTABLE_DATA, { recursive: true });
