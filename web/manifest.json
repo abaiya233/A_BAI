@@ -1,0 +1,14 @@
+{
+  "name": "大肥鱼工具箱",
+  "short_name": "大肥鱼",
+  "description": "QQ 机器人与 Minecraft 服务器面板的本地控制台",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "background_color": "#eef3fb",
+  "theme_color": "#eef3fb",
+  "icons": [
+    { "src": "./brand.png", "sizes": "128x128", "type": "image/png", "purpose": "any" }
+  ]
+}

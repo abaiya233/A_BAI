@@ -1,0 +1,750 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#eef3fb" id="themeColorMeta">
+<meta name="color-scheme" content="light dark">
+<title>大肥鱼工具箱</title>
+<link rel="icon" href="./brand.png">
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="./brand.png">
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+
+<!-- ================= 背景 ================= -->
+<div class="bg-layer" aria-hidden="true"></div>
+<div class="bg-wintop" aria-hidden="true"></div>
+<div class="bg-noise" aria-hidden="true"></div>
+<div class="cursor-glow" id="cursorGlow" aria-hidden="true"></div>
+
+<!-- ================= 原生壳标题栏 =================
+     只在 WebView2 壳（DaFeiYuToolbox.exe）里显示：
+     背景是透明的，透出壳窗口的亚克力毛玻璃；
+     拖拽/按钮通过 chrome.webview.postMessage 交给壳处理。
+     浏览器里打开时 app.js 不加 has-shell，整条不显示，保持原样。 -->
+<div id="titlebar">
+  <div class="tb-icon"><svg class="i"><use href="#i-fish"/></svg></div>
+  <div class="tb-title">大肥鱼工具箱</div>
+  <div class="tb-buttons">
+    <button class="tb-btn" id="tbMin" title="最小化" aria-label="最小化"><span>&#xE921;</span></button>
+    <button class="tb-btn" id="tbMax" title="最大化" aria-label="最大化"><span>&#xE922;</span></button>
+    <button class="tb-btn tb-close" id="tbClose" title="关闭" aria-label="关闭"><span>&#xE8BB;</span></button>
+  </div>
+</div>
+
+<!-- 四边/四角 resize 手柄：壳模式下 mousedown 交给系统接管调窗口尺寸 -->
+<div class="tb-edge tb-eL" data-edge="10" aria-hidden="true"></div>
+<div class="tb-edge tb-eR" data-edge="11" aria-hidden="true"></div>
+<div class="tb-edge tb-eT" data-edge="12" aria-hidden="true"></div>
+<div class="tb-edge tb-eB" data-edge="15" aria-hidden="true"></div>
+<div class="tb-edge tb-eTL" data-edge="13" aria-hidden="true"></div>
+<div class="tb-edge tb-eTR" data-edge="14" aria-hidden="true"></div>
+<div class="tb-edge tb-eBL" data-edge="16" aria-hidden="true"></div>
+<div class="tb-edge tb-eBR" data-edge="17" aria-hidden="true"></div>
+
+<!-- ================= 图标库 ================= -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-fish" viewBox="0 0 24 24">
+      <path d="M2.8 12c3.2-4.6 8.2-5.8 12.1-3.3 1.4.9 2.5 2.1 3.5 3.3-1 1.2-2.1 2.4-3.5 3.3C11 17.8 6 16.6 2.8 12Z"/>
+      <path d="M18.4 12l3-2.4v4.8l-3-2.4Z"/>
+      <circle cx="8.6" cy="11" r=".9"/>
+    </symbol>
+    <symbol id="i-server" viewBox="0 0 24 24">
+      <rect x="3" y="3.5" width="18" height="7" rx="2.2"/>
+      <rect x="3" y="13.5" width="18" height="7" rx="2.2"/>
+      <path d="M7 7h.01M7 17h.01"/>
+    </symbol>
+    <symbol id="i-play" viewBox="0 0 24 24">
+      <path d="M8 5.5c0-.8.9-1.3 1.6-.9l8 5.9c.6.4.6 1.3 0 1.7l-8 5.9c-.7.4-1.6-.1-1.6-.9V5.5Z"/>
+    </symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24">
+      <rect x="6" y="6" width="12" height="12" rx="2.5"/>
+    </symbol>
+    <symbol id="i-external" viewBox="0 0 24 24">
+      <path d="M14 4h6v6M20 4l-8.5 8.5"/>
+      <path d="M19 14v4.5A1.5 1.5 0 0 1 17.5 20h-11A1.5 1.5 0 0 1 5 18.5v-11A1.5 1.5 0 0 1 6.5 6H11"/>
+    </symbol>
+    <symbol id="i-terminal" viewBox="0 0 24 24">
+      <rect x="3" y="4" width="18" height="16" rx="2.5"/>
+      <path d="M7 9.5l2.5 2.5L7 14.5M12.5 15H17"/>
+    </symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="3"/>
+      <path d="M12 2.8v2.4M12 18.8v2.4M4.5 12H2.1M21.9 12h-2.4M6.7 6.7 5 5M19 19l-1.7-1.7M17.3 6.7 19 5M5 19l1.7-1.7"/>
+    </symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24">
+      <path d="M20 11a8 8 0 1 0-2.3 6.3"/>
+      <path d="M20 4.5V11h-6.5"/>
+    </symbol>
+    <symbol id="i-key" viewBox="0 0 24 24">
+      <circle cx="8" cy="15" r="3.6"/>
+      <path d="M10.7 12.3 20 3M17 6l2.2 2.2M14.4 8.6l2.2 2.2"/>
+    </symbol>
+    <symbol id="i-check" viewBox="0 0 24 24">
+      <path d="M5 12.5 9.5 17 19 7"/>
+    </symbol>
+    <symbol id="i-arrow-left" viewBox="0 0 24 24">
+      <path d="M19 12H5M11 6l-6 6 6 6"/>
+    </symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24">
+      <path d="M12 3.5l1.9 5.1 5.1 1.9-5.1 1.9L12 17.5l-1.9-5.1L5 10.5l5.1-1.9L12 3.5Z"/>
+    </symbol>
+    <symbol id="i-download" viewBox="0 0 24 24">
+      <path d="M12 3.5v11M7.5 10.5 12 15l4.5-4.5"/>
+      <path d="M4.5 17.5v1.2A1.8 1.8 0 0 0 6.3 20.5h11.4a1.8 1.8 0 0 0 1.8-1.8v-1.2"/>
+    </symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24">
+      <path d="M4.5 6.5h15M9.5 6.5V4.8A1.3 1.3 0 0 1 10.8 3.5h2.4a1.3 1.3 0 0 1 1.3 1.3v1.7"/>
+      <path d="M6.5 6.5 7.4 19a1.5 1.5 0 0 0 1.5 1.4h6.2a1.5 1.5 0 0 0 1.5-1.4l.9-12.5"/>
+      <path d="M10.5 10v6M13.5 10v6"/>
+    </symbol>
+    <symbol id="i-package" viewBox="0 0 24 24">
+      <path d="M12 3 20 7.3v9.4L12 21l-8-4.3V7.3L12 3Z"/>
+      <path d="M4 7.3 12 11.6l8-4.3M12 11.6V21"/>
+    </symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="4"/>
+      <path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/>
+    </symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24">
+      <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a7 7 0 1 0 10.5 10.5Z"/>
+    </symbol>
+    <symbol id="i-palette" viewBox="0 0 24 24">
+      <path d="M12 3a9 9 0 0 0 0 18c1.4 0 2-.9 2-1.8 0-.8-.5-1.3-.5-2 0-1 .8-1.7 1.9-1.7h1.4A4.2 4.2 0 0 0 21 11.3C21 6.6 17 3 12 3Z"/>
+      <circle cx="7.8" cy="10.5" r="1.1"/>
+      <circle cx="11.5" cy="7.3" r="1.1"/>
+      <circle cx="15.8" cy="9" r="1.1"/>
+    </symbol>
+    <symbol id="i-book" viewBox="0 0 24 24">
+      <path d="M4 5.2A1.7 1.7 0 0 1 5.7 3.5H10a2.6 2.6 0 0 1 2 1 2.6 2.6 0 0 1 2-1h4.3A1.7 1.7 0 0 1 20 5.2v11.6a1.7 1.7 0 0 1-1.7 1.7H14a2.2 2.2 0 0 0-2 1.2 2.2 2.2 0 0 0-2-1.2H4.7A1.7 1.7 0 0 1 3 16.8Z"/>
+      <path d="M12 4.5v14.2"/>
+    </symbol>
+    <symbol id="i-info" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="8.5"/>
+      <path d="M12 11v5.5M12 7.8h.01"/>
+    </symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24">
+      <path d="M12 3.8 21 19.2H3L12 3.8Z"/>
+      <path d="M12 9.5v4M12 16.4h.01"/>
+    </symbol>
+    <symbol id="i-close" viewBox="0 0 24 24">
+      <path d="M6 6l12 12M18 6 6 18"/>
+    </symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24">
+      <path d="M3.5 7.2A1.7 1.7 0 0 1 5.2 5.5h3.4l2 2.4h8.2a1.7 1.7 0 0 1 1.7 1.7v7.7a1.7 1.7 0 0 1-1.7 1.7H5.2a1.7 1.7 0 0 1-1.7-1.7V7.2Z"/>
+    </symbol>
+    <symbol id="i-bolt" viewBox="0 0 24 24">
+      <path d="M13.5 2.5 5 13.2h5.3L9.8 21.5 19 10.6h-5.4l-.1-8.1Z"/>
+    </symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24">
+      <path d="M12 5v14M5 12h14"/>
+    </symbol>
+    <symbol id="i-arrow-up" viewBox="0 0 24 24">
+      <path d="M12 20V5M6 11l6-6 6 6"/>
+    </symbol>
+    <symbol id="i-chevron-left" viewBox="0 0 24 24">
+      <path d="M15 6l-6 6 6 6"/>
+    </symbol>
+    <symbol id="i-chevron-right" viewBox="0 0 24 24">
+      <path d="M9 6l6 6-6 6"/>
+    </symbol>
+  </defs>
+</svg>
+
+<!-- ================= 顶栏 ================= -->
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-mark">
+      <img src="./brand.png" alt="大肥鱼" width="40" height="40">
+    </div>
+    <div class="brand-text">
+      <h1>大肥鱼工具箱</h1>
+    </div>
+  </div>
+
+  <nav class="tabs" id="tabs">
+    <!-- 超过两个栏位时才出现的翻页箭头。
+         注意：这里不要写 hidden 属性 —— 靠 .tabs.has-overflow 控制显隐，
+         混用 hidden 会依赖「CSS 盖掉 hidden」这种副作用，很脆。 -->
+    <button class="tab-nav" id="tabPrev" title="往前" aria-label="往前翻">
+      <svg class="i" viewBox="0 0 24 24"><use href="#i-chevron-left"/></svg>
+    </button>
+
+    <div class="tabs-track" id="tabsTrack">
+      <span class="tab-indicator" id="tabIndicator"></span>
+      <button class="tab is-active" data-pane="fish">
+        <svg class="i" viewBox="0 0 24 24"><use href="#i-fish"/></svg>
+        <span>大肥鱼</span>
+      </button>
+      <button class="tab" data-pane="mcs">
+        <svg class="i" viewBox="0 0 24 24"><use href="#i-server"/></svg>
+        <span>MCS 服务器</span>
+      </button>
+    </div>
+
+    <!-- 常驻的「+」：固定在轨道右侧、翻页箭头左边，不随轨道滚走，
+         随时点它都能进下载中心。空壳状态下它就是整个顶栏唯一的内容。 -->
+    <button class="tab tab-add" id="tabAdd" data-pane="add" title="下载 / 添加功能" aria-label="下载组件">
+      <svg class="i" viewBox="0 0 24 24"><use href="#i-plus"/></svg>
+    </button>
+
+    <button class="tab-nav" id="tabNext" title="往后" aria-label="往后翻">
+      <svg class="i" viewBox="0 0 24 24"><use href="#i-chevron-right"/></svg>
+    </button>
+  </nav>
+
+  <div class="top-right">
+    <div class="live-pill" id="livePill">
+      <span class="dot" id="globalDot"></span>
+      <span id="globalText">全部停止</span>
+    </div>
+    <button class="icon-btn glowable" id="btnSettings" title="设置" aria-label="设置">
+      <svg class="i" viewBox="0 0 24 24"><use href="#i-settings"/></svg>
+    </button>
+  </div>
+</header>
+
+<!-- ================= 主体 ================= -->
+<main>
+
+  <!-- ========== 栏位零：一个组件都没装 ========== -->
+  <section class="pane pane-welcome" id="pane-welcome">
+    <div class="wrap">
+      <section class="card welcome-hero glowable">
+        <div class="welcome-mark">
+          <img src="./brand.png" alt="大肥鱼" width="76" height="76">
+        </div>
+        <h2>工具箱现在是空的</h2>
+        <p>
+          这里只是一个启动器，真正干活的是下面两个板块里的软件。<br>
+          装好之后就能一键跑起来，以后再打开就直接用。
+        </p>
+        <div class="welcome-actions">
+          <button class="btn btn-primary btn-lg glowable" id="btnWelcomeInstall">
+            <svg class="i" viewBox="0 0 24 24"><use href="#i-download"/></svg>
+            <span>进入下载中心</span>
+          </button>
+        </div>
+        <div class="welcome-meta">约 400 MB · 支持断点续传 · 装完能整个文件夹拷走</div>
+      </section>
+
+      <div class="welcome-grid" id="welcomeGrid"></div>
+
+      <div class="foot-note">
+        所有组件都装在本目录的 <code>components/</code> 里，不会写到系统目录
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 栏位一：大肥鱼 ========== -->
+  <section class="pane is-active" id="pane-fish">
+    <div class="wrap" id="fishMain">
+
+      <!-- 组件没装齐时的引导条 -->
+      <div class="notice" id="fishMissing" hidden>
+        <span class="notice-icon"><svg class="i" viewBox="0 0 24 24"><use href="#i-alert"/></svg></span>
+        <div class="notice-body">
+          <strong>还差点东西没装</strong>
+          <span id="fishMissingText">需要 SnowLuma 和 AstrBot 才能跑起来。</span>
+        </div>
+        <button class="btn btn-primary btn-sm glowable" id="btnFishGoInstall">
+          <svg class="i" viewBox="0 0 24 24"><use href="#i-download"/></svg>
+          <span>去下载</span>
+        </button>
+      </div>
+
+      <section class="card hero glowable">
+        <div class="hero-left">
+          <div class="avatar-ring">
+            <img id="fishAvatar" src="./avatar.png" alt="大肥鱼" onerror="this.style.display='none';this.parentNode.classList.add('no-img')">
+            <span class="avatar-fallback">鱼</span>
+          </div>
+          <div class="hero-txt">
+            <div class="hero-title">
+              大肥鱼
+              <span class="tag">QQ ⇄ AstrBot</span>
+            </div>
+            <p class="hero-sub">AstrBot 负责思考，SnowLuma 连接 QQ。启动后直接去 QQ 里找她说话。</p>
+          </div>
+        </div>
+
+        <div class="hero-actions">
+          <button class="btn btn-primary glowable" id="btnFishStart">
+            <svg class="i" viewBox="0 0 24 24"><use href="#i-play"/></svg>
+            <span id="btnFishStartText">启动大肥鱼</span>
+          </button>
+          <button class="btn btn-ghost glowable" id="btnFishStop">
+            <svg class="i" viewBox="0 0 24 24"><use href="#i-stop"/></svg>
+            <span>关闭</span>
+          </button>
+        </div>
+      </section>
+
+      <div class="stat-row">
+        <div class="card stat glowable" id="statAstrbot">
+          <div class="stat-head">AstrBot · 6185</div>
+          <div class="stat-body"><span class="dot"></span><span class="stat-text">未运行</span></div>
+          <div class="stat-foot">大脑 / WebUI</div>
+        </div>
+        <div class="card stat glowable" id="statSnow">
+          <div class="stat-head">QQ 连接器 · 5099</div>
+          <div class="stat-body"><span class="dot"></span><span class="stat-text">未运行</span></div>
+          <div class="stat-foot">SnowLuma 控制台</div>
+        </div>
+        <div class="card stat glowable" id="statChannel">
+          <div class="stat-head">消息通道 · 3001</div>
+          <div class="stat-body"><span class="dot"></span><span class="stat-text">未连接</span></div>
+          <div class="stat-foot">QQ 进程连接</div>
+        </div>
+      </div>
+
+      <section class="card steps-card" id="fishSteps" hidden>
+        <div class="steps-head">
+          <div class="steps-title">
+            <span class="spinner" id="stepsSpinner"></span>
+            <span id="stepsTitle">正在启动…</span>
+          </div>
+          <span class="steps-hint" id="stepsHint">别关页面</span>
+        </div>
+        <ul class="steps-list" id="stepsList"></ul>
+      </section>
+
+      <div class="card-grid">
+        <button class="card action glowable" id="btnOpenAstrbot">
+          <span class="action-icon"><svg class="i" viewBox="0 0 24 24"><use href="#i-spark"/></svg></span>
+          <span class="action-title">打开 AstrBot 面板</span>
+          <span class="action-sub">配置模型、人格、插件，聊聊天</span>
+        </button>
+        <button class="card action glowable" id="btnOpenSnow">
+          <span class="action-icon"><svg class="i" viewBox="0 0 24 24"><use href="#i-external"/></svg></span>
+          <span class="action-title">打开 SnowLuma</span>
+          <span class="action-sub">看 QQ 在线状态与 OneBot 连接</span>
+        </button>
+        <button class="card action glowable" id="btnLogs">
+          <span class="action-icon"><svg class="i" viewBox="0 0 24 24"><use href="#i-terminal"/></svg></span>
+          <span class="action-title">查看运行日志</span>
+          <span class="action-sub">启动失败时第一时间看这里</span>
+        </button>
+      </div>
+
+      <section class="console" id="consoleCard">
+        <div class="console-head">
+          <span class="pulse-led" id="consoleLed"></span>
+          <span class="console-title">运行动态</span>
+          <span class="console-sub" id="consoleSub">AstrBot 实时日志</span>
+        </div>
+        <pre class="console-body" id="consoleBody">等待启动…</pre>
+      </section>
+
+      <div class="foot-note">
+        所有服务只监听 127.0.0.1，不对外网开放 · AstrBot 6185 / SnowLuma 5099 / MCS 23333
+      </div>
+
+    </div>
+
+    <!-- SnowLuma 视图：点「打开 SnowLuma」后覆盖掉上面整块内容，返回时再换回来。
+         这就是初版的做法 —— 还在工具箱窗口里，顶栏不变，只是内容区换了。
+         共用 .hero-mcs 的样式和折叠规则，所以外观跟 MCS 那条一致。 -->
+    <div class="snow-wrap" id="snowView" hidden>
+      <section class="card hero hero-mcs" id="snowHero">
+        <div class="hero-left">
+          <div class="hero-mark"><svg class="i" viewBox="0 0 24 24"><use href="#i-fish"/></svg></div>
+          <div class="hero-txt">
+            <div class="hero-title">
+              SnowLuma
+              <span class="tag">QQ 连接器</span>
+            </div>
+            <p class="hero-sub" id="snowHeroSub">看 QQ 在线状态与 OneBot 连接，登录会自动完成。</p>
+          </div>
+        </div>
+
+        <div class="mcs-chips">
+          <span class="chip" id="snowChipConsole">控制台 5099</span>
+        </div>
+
+        <div class="hero-actions">
+          <button class="btn btn-ghost glowable" id="btnSnowReload">
+            <svg class="i" viewBox="0 0 24 24"><use href="#i-refresh"/></svg>
+            <span>刷新</span>
+          </button>
+          <button class="btn btn-ghost glowable" id="btnSnowBack">
+            <svg class="i" viewBox="0 0 24 24"><use href="#i-arrow-left"/></svg>
+            <span>返回</span>
+          </button>
+        </div>
+
+        <button class="mcs-fold" id="btnSnowFold" type="button" aria-expanded="true" title="收起操作栏">
+          <svg class="i" viewBox="0 0 24 24"><use href="#i-chevron-right"/></svg>
+        </button>
+      </section>
+
+      <div class="snow-frames">
+        <iframe id="snowFrame" title="SnowLuma 面板"></iframe>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 栏位二：MCS ========== -->
+  <section class="pane pane-mcs" id="pane-mcs">
+
+    <div class="mcs-shell">
+
+      <!-- MCS 自己的启动栏位 -->
+      <section class="card hero hero-mcs glowable" id="mcsHero">
+        <div class="hero-left">
+          <div class="hero-mark"><svg class="i" viewBox="0 0 24 24"><use href="#i-server"/></svg></div>
+          <div class="hero-txt">
+            <div class="hero-title">
+              MCS 服务器
+              <span class="tag">Minecraft</span>
+            </div>
+            <p class="hero-sub" id="mcsHeroSub">守护进程 + 网页面板。启动后自动登录，直接进主界面。</p>
+          </div>
+        </div>
+
+        <div class="mcs-chips">
+          <span class="chip" id="chipWeb">面板 23333</span>
+          <span class="chip" id="chipDaemon">守护 24444</span>
+          <span class="chip" id="chipInst">实例 —</span>
+        </div>
+
+        <div class="hero-actions">
+          <button class="btn btn-primary glowable" id="btnMcsStart">
+            <svg class="i" viewBox="0 0 24 24"><use href="#i-play"/></svg>
+            <span id="btnMcsStartText">启动并进入</span>
+          </button>
+          <button class="btn btn-ghost glowable" id="btnMcsRelogin" title="MCS 重启后会话会失效，点这里重新自动登录">
+            <svg class="i" viewBox="0 0 24 24"><use href="#i-key"/></svg>
+            <span>免密重登</span>
+          </button>
+          <button class="btn btn-ghost glowable" id="btnMcsStop">
+            <svg class="i" viewBox="0 0 24 24"><use href="#i-stop"/></svg>
+            <span>停止</span>
+          </button>
+        </div>
+
+        <!-- 折叠把手：放在 hero 内部右侧。面板进去后这一条收成细栏，点箭头再展开 -->
+        <button class="mcs-fold" id="btnMcsFold" type="button" aria-expanded="true" title="收起操作栏">
+          <svg class="i" viewBox="0 0 24 24"><use href="#i-chevron-right"/></svg>
+        </button>
+      </section>
+
+      <div class="mcs-view" id="mcsView">
+        <div class="mcs-empty" id="mcsEmpty">
+          <div class="empty-card">
+            <div class="empty-icon"><svg class="i" viewBox="0 0 24 24"><use href="#i-server"/></svg></div>
+            <h2>MCS 服务器还没起来</h2>
+            <p id="mcsEmptyText">点上面的<strong>「启动并进入」</strong>：守护进程和面板会一起拉起来，然后自动登录，直接进主界面——不用输密码。</p>
+            <button class="btn btn-primary glowable" id="btnMcsStartBig">
+              <svg class="i" viewBox="0 0 24 24"><use href="#i-play"/></svg>
+              <span>一键启动</span>
+            </button>
+          </div>
+        </div>
+        <iframe id="mcsFrame" title="MCSManager 面板" hidden></iframe>
+      </div>
+
+    </div>
+
+  </section>
+
+</main>
+
+<!-- ================= 浮层：AstrBot ================= -->
+<div class="sheet" id="sheetAstrbot" hidden>
+  <div class="sheet-bar">
+    <button class="btn btn-ghost btn-sm glowable" id="btnSheetBack">
+      <svg class="i" viewBox="0 0 24 24"><use href="#i-arrow-left"/></svg>
+      <span>返回</span>
+    </button>
+    <span class="sheet-title">AstrBot 面板</span>
+    <button class="btn btn-ghost btn-sm glowable" id="btnSheetReload">
+      <svg class="i" viewBox="0 0 24 24"><use href="#i-refresh"/></svg>
+      <span>刷新</span>
+    </button>
+  </div>
+  <iframe id="astrbotFrame" title="AstrBot 面板"></iframe>
+</div>
+
+<!-- ================= 浮层：日志 ================= -->
+<div class="sheet" id="sheetLog" hidden>
+  <div class="sheet-bar">
+    <button class="btn btn-ghost btn-sm glowable" id="btnLogBack">
+      <svg class="i" viewBox="0 0 24 24"><use href="#i-arrow-left"/></svg>
+      <span>返回</span>
+    </button>
+    <span class="sheet-title">运行日志</span>
+    <div class="log-tabs" id="logTabs">
+      <button class="mini-tab is-active" data-log="astrbot">AstrBot</button>
+      <button class="mini-tab" data-log="snowluma">SnowLuma</button>
+      <button class="mini-tab" data-log="mcs-web">MCS 面板</button>
+      <button class="mini-tab" data-log="mcs-daemon">MCS 守护</button>
+    </div>
+    <button class="btn btn-ghost btn-sm glowable" id="btnLogReload">
+      <svg class="i" viewBox="0 0 24 24"><use href="#i-refresh"/></svg>
+      <span>刷新</span>
+    </button>
+  </div>
+  <pre class="log-body" id="logBody">加载中…</pre>
+</div>
+
+<!-- ================= 浮层：设置（多栏） ================= -->
+<div class="sheet sheet-center" id="sheetSettings" hidden>
+  <div class="settings">
+
+    <aside class="set-nav">
+      <div class="set-nav-head">
+        <span class="set-nav-title">设置</span>
+        <span class="set-nav-sub">大肥鱼工具箱</span>
+      </div>
+
+      <button class="set-tab is-active" data-sec="components">
+        <svg class="i" viewBox="0 0 24 24"><use href="#i-package"/></svg>
+        <span>下载中心</span>
+        <em class="set-badge" id="badgeComponents" hidden></em>
+      </button>
+      <button class="set-tab" data-sec="account">
+        <svg class="i" viewBox="0 0 24 24"><use href="#i-key"/></svg>
+        <span>账号与免密</span>
+      </button>
+      <button class="set-tab" data-sec="appearance">
+        <svg class="i" viewBox="0 0 24 24"><use href="#i-palette"/></svg>
+        <span>外观</span>
+      </button>
+      <button class="set-tab" data-sec="guide">
+        <svg class="i" viewBox="0 0 24 24"><use href="#i-book"/></svg>
+        <span>新手教程</span>
+      </button>
+      <button class="set-tab" data-sec="about">
+        <svg class="i" viewBox="0 0 24 24"><use href="#i-info"/></svg>
+        <span>关于与高级</span>
+      </button>
+
+      <div class="set-nav-foot">
+        <button class="btn btn-ghost btn-sm glowable" id="btnQuit" title="只关工具箱界面，已启动的服务不受影响">退出工具箱</button>
+      </div>
+    </aside>
+
+    <div class="set-body">
+
+      <!-- ---------- 下载中心 ---------- -->
+      <section class="set-sec is-active" id="sec-components">
+        <div class="set-sec-head">
+          <h2>下载中心</h2>
+          <p>软件按板块分开，哪个用得上就装哪个。装好的放在本目录的 <code>components/</code> 里，整个文件夹拷走换个电脑照样能用。</p>
+        </div>
+
+        <div class="set-row">
+          <div class="set-row-main">
+            <span class="set-row-title">检查更新</span>
+            <span class="set-row-desc" id="updateDesc">看看已装的组件有没有出新版本。更新只替换程序文件，配置和聊天记录都留着。</span>
+          </div>
+          <button class="btn btn-ghost btn-sm glowable" id="btnCheckUpdate">
+            <svg class="i" viewBox="0 0 24 24"><use href="#i-refresh"/></svg>
+            <span>检查更新</span>
+          </button>
+        </div>
+
+        <div class="comp-groups" id="compList">
+          <div class="comp-skel">正在检查安装状态…</div>
+        </div>
+
+        <div class="set-row">
+          <div class="set-row-main">
+            <span class="set-row-title">下载源</span>
+            <span class="set-row-desc">GitHub 直连最快。如果卡住不动，换镜像再试。</span>
+          </div>
+          <select class="select" id="selMirror"></select>
+        </div>
+
+        <div class="set-tip">
+          <svg class="i" viewBox="0 0 24 24"><use href="#i-info"/></svg>
+          <span>下载支持断点续传，中途关掉工具箱也能接着下。装完会自动解压到正确位置。</span>
+        </div>
+      </section>
+
+      <!-- ---------- 账号与免密 ---------- -->
+      <section class="set-sec" id="sec-account">
+        <div class="set-sec-head">
+          <h2>账号与免密</h2>
+          <p>密码只存在你本机的 <code>server/config.json</code> 里，不会上传到任何地方。</p>
+        </div>
+
+        <label class="field">
+          <span>MCS 面板用户名</span>
+          <input id="inpUser" type="text" autocomplete="off" spellcheck="false" placeholder="例如 阿白不会睡觉">
+        </label>
+        <label class="field">
+          <span>MCS 面板密码</span>
+          <input id="inpPass" type="password" autocomplete="new-password" placeholder="留空表示不修改">
+        </label>
+        <div class="set-row">
+          <div class="set-row-main">
+            <span class="set-row-title">AstrBot 免密补丁</span>
+            <span class="set-row-desc">让嵌入的 AstrBot 面板不用登一次。它升级换掉 webui 目录后会失效，届时点一下即可。</span>
+          </div>
+          <button class="btn btn-ghost btn-sm glowable" id="btnPatch">重打补丁</button>
+        </div>
+
+        <div class="set-actions">
+          <button class="btn btn-primary glowable" id="btnSettingsSave">
+            <svg class="i" viewBox="0 0 24 24"><use href="#i-check"/></svg>
+            <span>保存并登录</span>
+          </button>
+          <button class="btn btn-ghost glowable" id="btnSettingsCancel">关闭</button>
+        </div>
+      </section>
+
+      <!-- ---------- 外观 ---------- -->
+      <section class="set-sec" id="sec-appearance">
+        <div class="set-sec-head">
+          <h2>外观</h2>
+          <p>选择会记住，下次打开还是这个样子。</p>
+        </div>
+
+        <div class="set-block">
+          <span class="set-block-title">主题</span>
+          <div class="seg" id="segTheme">
+            <button class="seg-item is-active" data-theme="light">
+              <svg class="i" viewBox="0 0 24 24"><use href="#i-sun"/></svg>
+              <span>浅色</span>
+            </button>
+            <button class="seg-item" data-theme="dark">
+              <svg class="i" viewBox="0 0 24 24"><use href="#i-moon"/></svg>
+              <span>深色</span>
+            </button>
+            <button class="seg-item" data-theme="auto">
+              <svg class="i" viewBox="0 0 24 24"><use href="#i-bolt"/></svg>
+              <span>跟随系统</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="set-block">
+          <span class="set-block-title">主题色</span>
+          <div class="swatches" id="swatches">
+            <button class="swatch is-active" data-accent="blue" style="--sw:#2563eb" title="深海蓝"></button>
+            <button class="swatch" data-accent="violet" style="--sw:#7c3aed" title="夜紫"></button>
+            <button class="swatch" data-accent="teal" style="--sw:#0d9488" title="青碧"></button>
+            <button class="swatch" data-accent="rose" style="--sw:#e11d48" title="胭脂"></button>
+            <button class="swatch" data-accent="amber" style="--sw:#d97706" title="琥珀"></button>
+            <button class="swatch" data-accent="slate" style="--sw:#475569" title="石墨"></button>
+          </div>
+        </div>
+
+        <div class="set-block">
+          <span class="set-block-title">效果预览</span>
+          <div class="preview">
+            <div class="preview-card">
+              <span class="preview-title">大肥鱼</span>
+              <span class="preview-sub">QQ 机器人 · 运行中</span>
+              <div class="preview-actions">
+                <button class="btn btn-primary btn-sm glowable" type="button">主要按钮</button>
+                <button class="btn btn-ghost btn-sm glowable" type="button">次要按钮</button>
+              </div>
+            </div>
+            <div class="preview-chips">
+              <span class="chip on">已连接</span>
+              <span class="chip">未启动</span>
+              <span class="comp-badge ok">已安装</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------- 新手教程 ---------- -->
+      <section class="set-sec" id="sec-guide">
+        <div class="set-sec-head">
+          <h2>新手教程</h2>
+          <p>从零到能聊天，一共五步。卡住了就看对应的那一步。</p>
+        </div>
+
+        <ol class="guide-list">
+          <li class="guide-item">
+            <span class="guide-num">1</span>
+            <div class="guide-main">
+              <strong>装组件</strong>
+              <p>在「下载中心」的「QQ 机器人」里下载 <b>SnowLuma</b> 和 <b>AstrBot</b>。两个加起来约 320 MB，网速快的话一两分钟。MCS 是想开 Minecraft 服才需要，可以不装。</p>
+            </div>
+          </li>
+          <li class="guide-item">
+            <span class="guide-num">2</span>
+            <div class="guide-main">
+              <strong>启动大肥鱼</strong>
+              <p>回到第一个栏位点「启动大肥鱼」。它会依次开 SnowLuma、登录、拉起 QQ 进程、再开 AstrBot，每一步的进展都会实时显示，不用管它。</p>
+            </div>
+          </li>
+          <li class="guide-item">
+            <span class="guide-num">3</span>
+            <div class="guide-main">
+              <strong>QQ 扫码登一次</strong>
+              <p>第一次用要登录 QQ。点「打开 SnowLuma」，在新窗口里扫码，登录一次之后它会记住，以后不用再扫。</p>
+            </div>
+          </li>
+          <li class="guide-item">
+            <span class="guide-num">4</span>
+            <div class="guide-main">
+              <strong>给大脑接上模型</strong>
+              <p>点「打开 AstrBot 面板」，在「服务提供商」里填你的大模型 API Key（DeepSeek、OpenAI、通义都行），然后在「配置」里挑默认模型。不填 Key 的话机器人能上线但不会说话。</p>
+            </div>
+          </li>
+          <li class="guide-item">
+            <span class="guide-num">5</span>
+            <div class="guide-main">
+              <strong>去 QQ 找她说话</strong>
+              <p>以上都完成后，直接在 QQ 里给机器人账号发消息就行。没反应的话回来看「运行日志」里的报错。</p>
+            </div>
+          </li>
+        </ol>
+
+        <div class="set-tip">
+          <svg class="i" viewBox="0 0 24 24"><use href="#i-info"/></svg>
+          <span>想换个电脑用？把整个工具箱文件夹复制过去，删掉 <code>components/</code> 后重新下载组件即可。注意：<code>snowluma/</code> 和 AstrBot 的数据里存着你的 QQ 登录凭据，别发给别人。</span>
+        </div>
+      </section>
+
+      <!-- ---------- 关于与高级 ---------- -->
+      <section class="set-sec" id="sec-about">
+        <div class="set-sec-head">
+          <h2>关于与高级</h2>
+          <p>排查问题时会用到的信息。</p>
+        </div>
+
+        <div class="kv-list">
+          <div class="kv"><span>工具箱版本</span><b id="kvVersion">1.2.0</b></div>
+          <div class="kv"><span>监听地址</span><b>127.0.0.1:8788</b></div>
+          <div class="kv"><span>组件目录</span><b id="kvCompDir">—</b></div>
+          <div class="kv"><span>数据目录</span><b id="kvDataDir">—</b></div>
+          <div class="kv"><span>运行模式</span><b id="kvMode">—</b></div>
+        </div>
+
+        <div class="set-row">
+          <div class="set-row-main">
+            <span class="set-row-title">退出工具箱</span>
+            <span class="set-row-desc">只关界面和后台服务。已经启动的 AstrBot / SnowLuma / MCS 不会跟着退出。</span>
+          </div>
+          <button class="btn btn-ghost btn-sm glowable" id="btnQuit2">退出</button>
+        </div>
+
+        <div class="set-actions">
+          <button class="btn btn-ghost glowable" id="btnSettingsClose">关闭设置</button>
+        </div>
+      </section>
+
+    </div>
+
+    <button class="set-close glowable" id="btnSettingsX" aria-label="关闭">
+      <svg class="i" viewBox="0 0 24 24"><use href="#i-close"/></svg>
+    </button>
+
+  </div>
+</div>
+
+<div class="toast-wrap" id="toastWrap"></div>
+
+<script src="./app.js"></script>
+</body>
+</html>

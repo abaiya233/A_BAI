@@ -1,0 +1,19 @@
+{
+  "port": 8788,
+  "paths": {
+    "dafeiyu": "",
+    "mcs": "",
+    "node": ""
+  },
+  "appearance": {
+    "theme": "light",
+    "accent": "blue"
+  },
+  "download": {
+    "mirror": "auto"
+  },
+  "mcsAccount": {
+    "username": "",
+    "password": ""
+  }
+}

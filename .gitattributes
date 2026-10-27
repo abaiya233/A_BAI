@@ -1,0 +1,19 @@
+# 换行策略
+# ---------------------------------------------------------------
+# 仓库里统一存 LF，检出时按平台还原。
+# 但 .bat / .cmd / .ps1 必须强制 CRLF —— 否则 Linux 或 macOS 上
+# clone 下来再传回 Windows，cmd 会读得乱七八糟（实测会把一行撕成两行）。
+* text=auto
+
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# 二进制：禁止任何换行 / 编码转换
+*.png binary
+*.ico binary
+*.jpg binary
+*.jpeg binary
+*.exe binary
+*.dll binary
+*.zip binary
